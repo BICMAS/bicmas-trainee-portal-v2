@@ -1,0 +1,13 @@
+@import "tailwindcss";
+
+@source "./index.html";
+@source "./index.tsx";
+@source "./src/**/*.{js,ts,jsx,tsx}";
+
+@theme {
+  --color-brand-primary: #0B6B6E;
+  --color-brand-primary-dark: #085456;
+  --color-brand-primary-light: #128A8E;
+  --color-brand-accent: #C4A35A;
+  --color-brand-accent-dark: #A8883F;
+}
