@@ -4,9 +4,16 @@ const config: CapacitorConfig = {
   appId: "com.bicmas.academy",
   appName: "BICMAS LEARN",
   webDir: "dist",
+  // Allow http:// API calls during local device testing (LAN IP).
+  server: {
+    cleartext: true,
+  },
   // Let OneSignal own iOS push registration (avoids APNs delegate conflicts).
   ios: {
     handleApplicationNotifications: false,
+  },
+  android: {
+    allowMixedContent: true,
   },
 };
 
