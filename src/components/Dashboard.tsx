@@ -137,32 +137,46 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
   const handleEnableNotifications = async () => {
     setIsEnablingNotifications(true);
-    setNotificationStatus("");
+    setNotificationStatus("Waiting for browser permission…");
 
     try {
-      const subscription = await registerPushNotifications();
+      const subscription = await registerPushNotifications(user?.id);
       const permission = getNotificationPermission();
 
       if (subscription) {
         setNotificationsEnabled(true);
-        setNotificationStatus("Notifications enabled. We'll alert you about new announcements.");
+        const provider =
+          typeof subscription === "object" &&
+          subscription !== null &&
+          "provider" in subscription
+            ? (subscription as { provider?: string }).provider
+            : null;
+        setNotificationStatus(
+          provider === "onesignal"
+            ? "Notifications are on. You'll get alerts on this device."
+            : provider === "capacitor"
+              ? "Notifications are on for this device."
+              : "Notifications are on. You'll get alerts for new announcements.",
+        );
       } else if (permission === "denied") {
         setNotificationsEnabled(false);
-        setNotificationStatus("Notifications are blocked in your browser settings.");
+        setNotificationStatus(
+          "Notifications are blocked. Open the lock icon in the address bar, allow notifications, then try again.",
+        );
       } else {
         setNotificationsEnabled(false);
         const hint =
           getLastWebPushFailureReason() ??
           getPushUnavailableHint() ??
-          "Notifications were not enabled. Check VAPID or Firebase (see .env.example).";
+          "Could not enable notifications. Reload the page and try again.";
         setNotificationStatus(hint);
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Failed to enable notifications", error);
       setNotificationsEnabled(false);
-      setNotificationStatus(
-        `Failed to enable notifications: ${error?.message || "Unknown error"}`,
-      );
+      const message =
+        error instanceof Error ? error.message : "Unknown error";
+      setNotificationStatus(`Could not enable notifications: ${message}`);
     } finally {
       setIsEnablingNotifications(false);
     }
@@ -440,17 +454,44 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </div>
         </div>
 
-        <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-          <div>
+        <div
+          className={`mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-2xl border p-4 shadow-sm ${
+            notificationsEnabled
+              ? "border-emerald-200 bg-emerald-50/80"
+              : "border-slate-100 bg-white"
+          }`}
+        >
+          <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 text-slate-900 font-semibold">
-              <BellRing size={18} className="text-brand-primary" />
-              Stay updated with announcements
+              <BellRing
+                size={18}
+                className={
+                  notificationsEnabled ? "text-emerald-600" : "text-brand-primary"
+                }
+              />
+              {notificationsEnabled
+                ? "Notifications are on"
+                : "Stay updated with announcements"}
             </div>
             <p className="text-sm text-slate-500 mt-1">
-              Turn on browser notifications to receive new updates.
+              {notificationsEnabled
+                ? "You’ll get alerts when new announcements are posted."
+                : "Turn on browser notifications to receive new updates."}
             </p>
             {notificationStatus && (
-              <p className="text-sm text-slate-600 mt-2">{notificationStatus}</p>
+              <p
+                className={`text-sm mt-2 ${
+                  notificationsEnabled
+                    ? "text-emerald-700"
+                    : isEnablingNotifications
+                      ? "text-slate-600"
+                      : "text-amber-700"
+                }`}
+                role="status"
+                aria-live="polite"
+              >
+                {notificationStatus}
+              </p>
             )}
           </div>
 
@@ -458,13 +499,18 @@ export const Dashboard: React.FC<DashboardProps> = ({
             type="button"
             onClick={handleEnableNotifications}
             disabled={notificationsEnabled || isEnablingNotifications}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand-accent px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-brand-accent-dark disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
+            aria-busy={isEnablingNotifications}
+            className={`inline-flex shrink-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors disabled:cursor-not-allowed ${
+              notificationsEnabled
+                ? "bg-emerald-600 text-white"
+                : "bg-brand-accent text-white hover:bg-brand-accent-dark disabled:bg-slate-200 disabled:text-slate-500"
+            }`}
           >
             <Bell size={16} />
             {notificationsEnabled
-              ? "Notifications Enabled"
+              ? "Enabled"
               : isEnablingNotifications
-                ? "Enabling..."
+                ? "Please wait…"
                 : "Enable Notifications"}
           </button>
         </div>

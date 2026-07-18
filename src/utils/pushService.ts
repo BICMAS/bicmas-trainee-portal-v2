@@ -1,10 +1,40 @@
 import { Capacitor } from "@capacitor/core";
+import { subscribePush } from "@/api/push";
+import {
+  getLastOneSignalFailureReason,
+  registerOneSignalPush,
+  shouldUseOneSignalPush,
+} from "@/utils/oneSignalService";
 
 const NOTIFICATIONS_ENABLED_KEY = "notificationsEnabled";
 
+/** Set when web push registration returns null so the UI can explain why. */
+let lastWebPushFailureReason: string | null = null;
+
+export const getLastWebPushFailureReason = () =>
+  lastWebPushFailureReason ?? getLastOneSignalFailureReason();
+
+/** Persist Web Push subscription to the API when we have a PushSubscription. */
+async function persistWebPushSubscription(
+  subscription: PushSubscription,
+): Promise<void> {
+  try {
+    await subscribePush(subscription);
+  } catch (error) {
+    console.error("Failed to save push subscription on server", error);
+    lastWebPushFailureReason =
+      error instanceof Error
+        ? `Registered locally but failed to save on server: ${error.message}`
+        : "Registered locally but failed to save on server.";
+    throw error;
+  }
+}
+
 const urlBase64ToUint8Array = (base64String: string) => {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
-  const normalized = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const normalized = (base64String + padding)
+    .replace(/-/g, "+")
+    .replace(/_/g, "/");
   const rawData = window.atob(normalized);
 
   return Uint8Array.from(rawData, (char) => char.charCodeAt(0));
@@ -44,15 +74,12 @@ const setNotificationsEnabled = (enabled: boolean) => {
 };
 
 /**
- * Native FCM on Android calls FirebaseMessaging.getInstance(), which requires
- * `google-services.json` + Firebase setup. Without it the app can crash.
- *
- * On Android, `VITE_ANDROID_USE_NATIVE_FCM=true` takes precedence over
- * `VITE_VAPID_PUBLIC_KEY` so one build can use Web Push on the web and native
- * FCM in the WebView (PushManager is often unavailable there).
+ * Legacy Capacitor FCM path (without OneSignal). Prefers OneSignal when
+ * VITE_ONESIGNAL_APP_ID is set.
  */
 function shouldUseNativeCapacitorPush(): boolean {
   if (!Capacitor.isNativePlatform()) return false;
+  if (shouldUseOneSignalPush()) return false;
 
   const platform = Capacitor.getPlatform();
 
@@ -87,9 +114,12 @@ const registerCapacitorPushNotifications = async () => {
       console.log("Push notification received:", notification);
     });
 
-    PushNotifications.addListener("pushNotificationActionPerformed", (notification) => {
-      console.log("Push notification action performed:", notification);
-    });
+    PushNotifications.addListener(
+      "pushNotificationActionPerformed",
+      (notification) => {
+        console.log("Push notification action performed:", notification);
+      },
+    );
 
     capacitorListenersRegistered = true;
   }
@@ -97,13 +127,42 @@ const registerCapacitorPushNotifications = async () => {
   await PushNotifications.register();
 
   setNotificationsEnabled(true);
-  return { registered: true as const };
+  return { registered: true as const, provider: "capacitor" as const };
 };
 
-/** Set when web push registration returns null so the UI can explain why. */
-let lastWebPushFailureReason: string | null = null;
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        window.clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
 
-export const getLastWebPushFailureReason = () => lastWebPushFailureReason;
+/**
+ * Ensure a service worker is registered. In Vite DEV, index.tsx unregisters SWs
+ * for HMR — so we must register here when enabling notifications.
+ */
+async function ensurePushServiceWorker(): Promise<ServiceWorkerRegistration> {
+  let registration = await navigator.serviceWorker.getRegistration();
+
+  if (!registration) {
+    registration = await navigator.serviceWorker.register("/service-worker.js");
+  }
+
+  return withTimeout(
+    navigator.serviceWorker.ready,
+    12_000,
+    "Service worker did not become ready. Reload the page and try again.",
+  );
+}
 
 const registerWebPushNotifications = async () => {
   lastWebPushFailureReason = null;
@@ -113,20 +172,33 @@ const registerWebPushNotifications = async () => {
   if (!vapidPublicKey) {
     lastWebPushFailureReason =
       "This app build has no VITE_VAPID_PUBLIC_KEY embedded. Add it to .env or .env.production, then run pnpm build and rebuild the APK. (Vercel env only applies to the web deploy, not to mobile builds.)";
-    console.warn("Push notifications are disabled: missing VITE_VAPID_PUBLIC_KEY.");
+    console.warn(
+      "Push notifications are disabled: missing VITE_VAPID_PUBLIC_KEY.",
+    );
     return null;
   }
 
   if (!canUsePushNotifications()) {
     lastWebPushFailureReason =
-      "Web Push is not available in this WebView (missing PushManager or service worker). On Android, use native Firebase push: add google-services.json, set VITE_ANDROID_USE_NATIVE_FCM=true, remove reliance on Web Push in this WebView, then rebuild.";
+      "Web Push is not available in this WebView. On Android/iOS, set VITE_ONESIGNAL_APP_ID and rebuild, or use native FCM.";
     return null;
   }
 
-  const registration = await navigator.serviceWorker.ready;
+  let registration: ServiceWorkerRegistration;
+  try {
+    registration = await ensurePushServiceWorker();
+  } catch (error) {
+    lastWebPushFailureReason =
+      error instanceof Error
+        ? error.message
+        : "Could not register the service worker for notifications.";
+    return null;
+  }
+
   const existingSubscription = await registration.pushManager.getSubscription();
 
   if (existingSubscription) {
+    await persistWebPushSubscription(existingSubscription);
     setNotificationsEnabled(true);
     return existingSubscription;
   }
@@ -141,30 +213,60 @@ const registerWebPushNotifications = async () => {
     setNotificationsEnabled(false);
     lastWebPushFailureReason =
       permission === "denied"
-        ? "Notification permission was denied."
+        ? "Notifications are blocked. Click the lock icon in the address bar → allow notifications, then try again."
         : "Notification permission was not granted.";
     return null;
   }
 
   try {
-    const subscription = await registration.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
-    });
+    const subscription = await withTimeout(
+      registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
+      }),
+      15_000,
+      "Browser push subscribe timed out. Reload and try again.",
+    );
 
-    import.meta.env.DEV && console.debug("[Push] Web Push subscription OK:", subscription.endpoint);
+    import.meta.env.DEV &&
+      console.debug("[Push] Web Push subscription OK:", subscription.endpoint);
 
+    await withTimeout(
+      persistWebPushSubscription(subscription),
+      15_000,
+      "Saved locally but the server did not respond. Check that the API is running.",
+    );
     setNotificationsEnabled(true);
     return subscription;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    lastWebPushFailureReason = `Subscribe failed: ${msg}. Check that VITE_VAPID_PUBLIC_KEY matches your server’s key pair.`;
+    lastWebPushFailureReason = `Could not enable notifications: ${msg}`;
     return null;
   }
 };
 
-export const registerPushNotifications = async () => {
+/**
+ * Register for push.
+ * - Native + OneSignal App ID → OneSignal (mobile)
+ * - Native + FCM flag → Capacitor PushNotifications
+ * - Otherwise → Web Push (browser / PWA)
+ *
+ * @param externalUserId Backend user id for OneSignal.login (External ID)
+ */
+export const registerPushNotifications = async (
+  externalUserId?: string | null,
+) => {
   try {
+    if (shouldUseOneSignalPush()) {
+      const result = await registerOneSignalPush(externalUserId);
+      if (result) {
+        setNotificationsEnabled(true);
+      } else {
+        setNotificationsEnabled(false);
+      }
+      return result;
+    }
+
     if (shouldUseNativeCapacitorPush()) {
       return await registerCapacitorPushNotifications();
     }
@@ -180,11 +282,12 @@ export const registerPushNotifications = async () => {
   }
 };
 
-/** User-facing hint when Android cannot enable push (no Firebase + no VAPID). */
+/** User-facing hint when Android cannot enable push. */
 export const getPushUnavailableHint = (): string | null => {
   if (!Capacitor.isNativePlatform()) return null;
   if (Capacitor.getPlatform() !== "android") return null;
+  if (import.meta.env.VITE_ONESIGNAL_APP_ID) return null;
   if (import.meta.env.VITE_VAPID_PUBLIC_KEY) return null;
   if (import.meta.env.VITE_ANDROID_USE_NATIVE_FCM === "true") return null;
-  return "To enable push: add Firebase (google-services.json) and set VITE_ANDROID_USE_NATIVE_FCM=true, or set VITE_VAPID_PUBLIC_KEY for web-style push.";
+  return "To enable mobile push: set VITE_ONESIGNAL_APP_ID (recommended), or use VITE_VAPID_PUBLIC_KEY / Firebase FCM.";
 };

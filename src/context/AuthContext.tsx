@@ -33,6 +33,9 @@ export const AuthProvider = ({ children }: any) => {
   const [token, setToken] = useState<string | null>(getAccessToken());
 
   const logout = useCallback(() => {
+    void import("@/utils/oneSignalService").then(({ logoutOneSignalUser }) => {
+      void logoutOneSignalUser();
+    });
     clearAuth();
     setUser(null);
     setToken(null);
@@ -67,6 +70,13 @@ export const AuthProvider = ({ children }: any) => {
 
     setToken(data.accessToken);
     setUser(formattedUser);
+
+    // Link OneSignal subscription to this user (External ID = backend user id)
+    if (formattedUser.id) {
+      void import("@/utils/oneSignalService").then(({ loginOneSignalUser }) => {
+        void loginOneSignalUser(formattedUser.id);
+      });
+    }
   };
 
   /** Log out when JWT or 24h session cap is reached; always send user to login. */

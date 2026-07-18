@@ -7,3 +7,6 @@ project(':capacitor-app').projectDir = new File('../node_modules/.pnpm/@capacito
 
 include ':capacitor-push-notifications'
 project(':capacitor-push-notifications').projectDir = new File('../node_modules/.pnpm/@capacitor+push-notifications@7.0.6_@capacitor+core@7.6.0/node_modules/@capacitor/push-notifications/android')
+
+include ':onesignal-capacitor-plugin'
+project(':onesignal-capacitor-plugin').projectDir = new File('../node_modules/.pnpm/@onesignal+capacitor-plugin@1.1.4_@capacitor+core@7.6.0/node_modules/@onesignal/capacitor-plugin/android')

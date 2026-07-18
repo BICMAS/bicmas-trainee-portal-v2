@@ -1,4 +1,9 @@
 import { useEffect } from "react";
+import { getStoredUser } from "@/utils/auth";
+import {
+  initializeOneSignal,
+  loginOneSignalUser,
+} from "@/utils/oneSignalService";
 
 /**
  * Initialize Capacitor plugins on app startup
@@ -14,6 +19,13 @@ export const useInitializeCapacitor = () => {
           return;
         }
 
+        // OneSignal: init early on native so the device can register for FCM/APNs
+        await initializeOneSignal();
+        const stored = getStoredUser();
+        if (stored?.id) {
+          await loginOneSignalUser(stored.id);
+        }
+
         // Dynamically import Capacitor App (lazy loaded)
         let App;
         try {
@@ -27,10 +39,9 @@ export const useInitializeCapacitor = () => {
         // Register app state listeners for mobile
         App.addListener("appStateChange", (state: any) => {
           console.log("App state changed, active:", state.isActive);
-          
+
           // Refresh data when app comes to foreground
           if (state.isActive) {
-            // Trigger a refresh of course data and other critical info
             window.dispatchEvent(new Event("app-foreground"));
           }
         });
