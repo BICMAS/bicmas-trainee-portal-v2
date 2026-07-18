@@ -41,7 +41,10 @@ import {
   getLastWebPushFailureReason,
   getNotificationPermission,
   getPushUnavailableHint,
+  getWebPushUnavailableReason,
   hasEnabledNotifications,
+  isIosDevice,
+  isStandaloneDisplayMode,
   registerPushNotifications,
 } from "@/utils/pushService";
 import { fetchLeaderboard, type LeaderboardEntry } from "@/api/scores";
@@ -109,6 +112,13 @@ export const Dashboard: React.FC<DashboardProps> = ({
   );
   const [notificationStatus, setNotificationStatus] = React.useState("");
   const [isEnablingNotifications, setIsEnablingNotifications] = React.useState(false);
+  const iosNeedsHomeScreen =
+    typeof window !== "undefined" &&
+    isIosDevice() &&
+    !isStandaloneDisplayMode();
+  const webPushBlockedReason = iosNeedsHomeScreen
+    ? getWebPushUnavailableReason()
+    : null;
   const [leaderboardMetric, setLeaderboardMetric] = useState<"score" | "points">("score");
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [leaderboardEnabled, setLeaderboardEnabled] = useState(true);
@@ -496,9 +506,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <p className="text-sm text-slate-500 mt-1">
               {notificationsEnabled
                 ? "You’ll get alerts when new announcements are posted."
-                : "Turn on browser notifications to receive new updates."}
+                : iosNeedsHomeScreen
+                  ? "On iPhone, add this site to your Home Screen first, then open it from the icon to enable notifications."
+                  : "Turn on browser notifications to receive new updates."}
             </p>
-            {notificationStatus && (
+            {(notificationStatus || webPushBlockedReason) && (
               <p
                 className={`text-sm mt-2 ${
                   notificationsEnabled
@@ -510,7 +522,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 role="status"
                 aria-live="polite"
               >
-                {notificationStatus}
+                {notificationStatus || webPushBlockedReason}
               </p>
             )}
           </div>
@@ -518,7 +530,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
           <button
             type="button"
             onClick={handleEnableNotifications}
-            disabled={notificationsEnabled || isEnablingNotifications}
+            disabled={
+              notificationsEnabled ||
+              isEnablingNotifications ||
+              iosNeedsHomeScreen
+            }
             aria-busy={isEnablingNotifications}
             className={`inline-flex shrink-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors disabled:cursor-not-allowed ${
               notificationsEnabled
@@ -531,7 +547,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
               ? "Enabled"
               : isEnablingNotifications
                 ? "Please wait…"
-                : "Enable Notifications"}
+                : iosNeedsHomeScreen
+                  ? "Add to Home Screen first"
+                  : "Enable Notifications"}
           </button>
         </div>
 

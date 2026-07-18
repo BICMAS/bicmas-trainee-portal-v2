@@ -48,6 +48,62 @@ const canUsePushNotifications = () =>
   "serviceWorker" in navigator &&
   "PushManager" in window;
 
+/** True for iPhone / iPad Safari (and Chrome/Firefox on iOS, which use WebKit). */
+export const isIosDevice = (): boolean => {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent || "";
+  const iOS = /iPad|iPhone|iPod/.test(ua);
+  const iPadOs =
+    navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1;
+  return iOS || iPadOs;
+};
+
+/** Home Screen / installed PWA (required for Web Push on iOS). */
+export const isStandaloneDisplayMode = (): boolean => {
+  if (typeof window === "undefined") return false;
+  const nav = window.navigator as Navigator & { standalone?: boolean };
+  return (
+    window.matchMedia("(display-mode: standalone)").matches ||
+    nav.standalone === true
+  );
+};
+
+/**
+ * Why web push cannot be used right now (browser / PWA).
+ * Returns null when the environment looks capable.
+ */
+export const getWebPushUnavailableReason = (): string | null => {
+  if (typeof window === "undefined") {
+    return "Notifications are not available in this environment.";
+  }
+
+  if (Capacitor.isNativePlatform()) {
+    return "Web Push is not available in the native app WebView. Set VITE_ONESIGNAL_APP_ID and rebuild the APK, or use native FCM.";
+  }
+
+  if (!window.isSecureContext) {
+    return "Notifications require HTTPS (or localhost).";
+  }
+
+  // iOS only supports Web Push for Home Screen web apps (iOS 16.4+), not Safari tabs.
+  if (isIosDevice() && !isStandaloneDisplayMode()) {
+    return "On iPhone/iPad, open Share → Add to Home Screen, launch BICMAS LEARN from the home screen icon, then tap Enable Notifications. Safari tabs cannot receive web push.";
+  }
+
+  if (!("Notification" in window)) {
+    return "This browser does not support notifications.";
+  }
+
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+    if (isIosDevice()) {
+      return "Web Push needs iOS 16.4+ and the app opened from your Home Screen (not a Safari tab). Update iOS if needed, then try again from the home screen icon.";
+    }
+    return "This browser does not support Web Push. Try Chrome or Edge on desktop, or install the Android app for mobile alerts.";
+  }
+
+  return null;
+};
+
 export const getNotificationPermission = () =>
   typeof window !== "undefined" && "Notification" in window
     ? Notification.permission
@@ -180,7 +236,8 @@ const registerWebPushNotifications = async () => {
 
   if (!canUsePushNotifications()) {
     lastWebPushFailureReason =
-      "Web Push is not available in this WebView. On Android/iOS, set VITE_ONESIGNAL_APP_ID and rebuild, or use native FCM.";
+      getWebPushUnavailableReason() ??
+      "Web Push is not available in this browser.";
     return null;
   }
 
