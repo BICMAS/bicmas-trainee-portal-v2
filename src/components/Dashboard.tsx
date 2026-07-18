@@ -26,10 +26,15 @@ import {
   Trophy,
   Bell,
   BellRing,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 
 import { useAnnouncementNotifications } from "../hooks/useAnnouncementNotifications";
-import { getAnnouncements } from "@/services/announcementService";
+import {
+  getAnnouncementsPage,
+  type AnnouncementMeta,
+} from "@/services/announcementService";
 import { getAccessToken } from "@/utils/auth";
 import { getApiV1BaseUrl } from "@/config/api";
 import {
@@ -65,10 +70,12 @@ interface Announcement {
   id: string;
   text: string;
   createdAt: string;
-  user: {
+  user?: {
     fullName: string;
   };
 }
+
+const ANNOUNCEMENTS_PAGE_SIZE = 5;
 
 const API_BASE = getApiV1BaseUrl();
 
@@ -86,6 +93,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
     (c) => c.status === CourseStatus.InProgress,
   );
   const [announcements, setAnnouncements] = React.useState<Announcement[]>([]);
+  const [announcementPage, setAnnouncementPage] = React.useState(1);
+  const [announcementMeta, setAnnouncementMeta] =
+    React.useState<AnnouncementMeta>({
+      total: 0,
+      limit: ANNOUNCEMENTS_PAGE_SIZE,
+      offset: 0,
+      page: 1,
+      pageCount: 0,
+      hasMore: false,
+    });
+  const [announcementsLoading, setAnnouncementsLoading] = React.useState(false);
   const [notificationsEnabled, setNotificationsEnabled] = React.useState(
     hasEnabledNotifications() && getNotificationPermission() === "granted",
   );
@@ -117,21 +135,23 @@ export const Dashboard: React.FC<DashboardProps> = ({
           return;
         }
 
-        const data = await getAnnouncements();
+        setAnnouncementsLoading(true);
+        const { data, meta } = await getAnnouncementsPage({
+          page: announcementPage,
+          limit: ANNOUNCEMENTS_PAGE_SIZE,
+        });
 
-        const sorted = [...data].sort(
-          (a: Announcement, b: Announcement) =>
-            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-        );
-
-        setAnnouncements(sorted);
+        setAnnouncements(data);
+        setAnnouncementMeta(meta);
       } catch (err) {
         console.error("Failed to load announcements", err);
+      } finally {
+        setAnnouncementsLoading(false);
       }
     };
 
     fetchAnnouncements();
-  }, []);
+  }, [announcementPage]);
 
   useAnnouncementNotifications(notificationsEnabled);
 
@@ -571,32 +591,81 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </div>
 
           <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
-  <h3 className="font-bold text-brand-primary mb-4 flex items-center gap-2">
-    <Bell /> Announcements
-  </h3>
+            <h3 className="font-bold text-brand-primary mb-4 flex items-center gap-2">
+              <Bell /> Announcements
+            </h3>
 
-  <div className="space-y-3 max-h-64 overflow-y-auto">
-    {announcements.length === 0 ? (
-      <div className="py-8 text-center text-sm text-slate-500">
-        No announcements at the moment.
-      </div>
-    ) : (
-      announcements.map((announcement) => (
-        <div
-          key={announcement.id}
-          className="p-3 bg-slate-50 border border-slate-100 rounded-lg text-sm"
-        >
-          <p className="text-slate-700">{announcement.text}</p>
+            <div className="space-y-3 max-h-64 overflow-y-auto">
+              {announcementsLoading && announcements.length === 0 ? (
+                <div className="py-8 text-center text-sm text-slate-500">
+                  Loading announcements...
+                </div>
+              ) : announcements.length === 0 ? (
+                <div className="py-8 text-center text-sm text-slate-500">
+                  No announcements at the moment.
+                </div>
+              ) : (
+                announcements.map((announcement) => (
+                  <div
+                    key={announcement.id}
+                    className="p-3 bg-slate-50 border border-slate-100 rounded-lg text-sm"
+                  >
+                    <p className="text-slate-700">{announcement.text}</p>
 
-          <span className="text-xs text-slate-400 block mt-1">
-            {new Date(announcement.createdAt).toLocaleDateString()} •{" "}
-            {announcement.user.fullName}
-          </span>
-        </div>
-      ))
-    )}
-  </div>
-</div>
+                    <span className="text-xs text-slate-400 block mt-1">
+                      {new Date(announcement.createdAt).toLocaleDateString()}
+                      {announcement.user?.fullName
+                        ? ` • ${announcement.user.fullName}`
+                        : ""}
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {announcementMeta.total > 0 && (
+              <div className="mt-4 flex items-center justify-between gap-2 text-xs text-slate-500">
+                <span>
+                  {announcementMeta.offset + 1}–
+                  {Math.min(
+                    announcementMeta.offset + announcements.length,
+                    announcementMeta.total,
+                  )}{" "}
+                  of {announcementMeta.total}
+                </span>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setAnnouncementPage((p) => Math.max(1, p - 1))
+                    }
+                    disabled={announcementPage <= 1 || announcementsLoading}
+                    className="inline-flex items-center gap-0.5 rounded border border-slate-200 px-2 py-1 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                    Prev
+                  </button>
+                  <span className="px-1">
+                    {announcementPage} /{" "}
+                    {Math.max(1, announcementMeta.pageCount)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setAnnouncementPage((p) => p + 1)}
+                    disabled={
+                      announcementsLoading ||
+                      announcementPage >=
+                        Math.max(1, announcementMeta.pageCount)
+                    }
+                    className="inline-flex items-center gap-0.5 rounded border border-slate-200 px-2 py-1 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Next
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
 
           <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
             <div className="mb-4 flex items-center justify-between gap-3">

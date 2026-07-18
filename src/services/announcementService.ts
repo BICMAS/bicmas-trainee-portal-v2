@@ -2,7 +2,46 @@ import { getApiV1BaseUrl } from "@/config/api";
 import { getAccessToken } from "@/utils/auth";
 import { fetchWithAuthRetry } from "@/utils/fetchWithAuthRetry";
 
-export const getAnnouncements = async () => {
+export interface AnnouncementItem {
+  id: string;
+  text: string;
+  createdAt: string;
+  updatedAt?: string;
+  user?: {
+    fullName: string;
+  };
+}
+
+export interface AnnouncementMeta {
+  total: number;
+  limit: number;
+  offset: number;
+  page: number;
+  pageCount: number;
+  hasMore: boolean;
+}
+
+export interface AnnouncementsPage {
+  data: AnnouncementItem[];
+  meta: AnnouncementMeta;
+}
+
+const DEFAULT_META: AnnouncementMeta = {
+  total: 0,
+  limit: 5,
+  offset: 0,
+  page: 1,
+  pageCount: 0,
+  hasMore: false,
+};
+
+export const getAnnouncementsPage = async (options?: {
+  page?: number;
+  limit?: number;
+}): Promise<AnnouncementsPage> => {
+  const page = options?.page ?? 1;
+  const limit = options?.limit ?? 5;
+
   try {
     const token = getAccessToken();
 
@@ -10,7 +49,14 @@ export const getAnnouncements = async () => {
       throw new Error("No access token available");
     }
 
-    const res = await fetchWithAuthRetry(`${getApiV1BaseUrl()}/announcements`);
+    const params = new URLSearchParams({
+      page: String(page),
+      limit: String(limit),
+    });
+
+    const res = await fetchWithAuthRetry(
+      `${getApiV1BaseUrl()}/announcements?${params}`,
+    );
 
     if (!res.ok) {
       throw new Error(
@@ -24,11 +70,33 @@ export const getAnnouncements = async () => {
       throw new Error("Invalid announcements response format");
     }
 
-    return Array.isArray(result.data) ? result.data : [];
+    const data = Array.isArray(result.data) ? result.data : [];
+    const meta = result.meta ?? {};
+
+    return {
+      data,
+      meta: {
+        total: meta.total ?? data.length,
+        limit: meta.limit ?? limit,
+        offset: meta.offset ?? (page - 1) * limit,
+        page: meta.page ?? page,
+        pageCount: meta.pageCount ?? 0,
+        hasMore: Boolean(meta.hasMore),
+      },
+    };
   } catch (error) {
-    console.error("getAnnouncements failed", error);
+    console.error("getAnnouncementsPage failed", error);
     throw error;
   }
+};
+
+/** @deprecated Prefer getAnnouncementsPage for pagination meta */
+export const getAnnouncements = async (options?: {
+  page?: number;
+  limit?: number;
+}): Promise<AnnouncementItem[]> => {
+  const { data } = await getAnnouncementsPage(options);
+  return data;
 };
 
 export const showAnnouncementNotification = async (message: string) => {
@@ -41,7 +109,6 @@ export const showAnnouncementNotification = async (message: string) => {
       typeof navigator === "undefined" ||
       !("serviceWorker" in navigator)
     ) {
-      // Fallback to plain Notifications API if no SW is available
       new Notification("BICMAS LEARN Announcement", {
         body: message,
         icon: "/img/bicmas-logo.png",
@@ -53,7 +120,6 @@ export const showAnnouncementNotification = async (message: string) => {
 
     const registration = await navigator.serviceWorker.getRegistration();
     if (!registration) {
-      // No active service worker registration
       new Notification("BICMAS LEARN Announcement", {
         body: message,
         icon: "/img/bicmas-logo.png",
@@ -73,3 +139,5 @@ export const showAnnouncementNotification = async (message: string) => {
     console.error("Failed to show announcement notification", error);
   }
 };
+
+export { DEFAULT_META };

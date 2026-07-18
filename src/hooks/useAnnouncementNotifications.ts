@@ -12,7 +12,8 @@ export const useAnnouncementNotifications = (enabled: boolean) => {
 
     const checkAnnouncements = async () => {
       try {
-        const announcements = await getAnnouncements();
+        // Latest only — page 1, limit 1 (newest first from API).
+        const announcements = await getAnnouncements({ page: 1, limit: 1 });
 
         if (!announcements?.length) return;
 
